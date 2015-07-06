@@ -25,14 +25,14 @@ end while next_token
 
 events = []
 
-if ARGV[1]
-  start_time = Time.parse(ARGV[1])
-end
+start_time = if ARGV[1]
+               Time.parse(ARGV[1])
+             else
+               Time.now - 60 * 60
+             end
 
-if start_time
-  log_streams.reject! do |stream|
-    stream.last_event_timestamp < start_time.to_i * 1000
-  end
+log_streams.reject! do |stream|
+  stream.last_event_timestamp < start_time.to_i * 1000
 end
 
 log_streams.map do |stream|
