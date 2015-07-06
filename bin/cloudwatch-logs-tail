@@ -32,7 +32,7 @@ start_time = if ARGV[1]
              end
 
 log_streams.reject! do |stream|
-  stream.last_event_timestamp < start_time.to_i * 1000
+  stream.last_event_timestamp && stream.last_event_timestamp < start_time.to_i * 1000
 end
 
 log_streams.map do |stream|
