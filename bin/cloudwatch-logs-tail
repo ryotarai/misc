@@ -1,0 +1,64 @@
+#!/usr/bin/env ruby
+require 'aws-sdk-core'
+require 'time'
+
+if ARGV.empty?
+  puts "Usage: #{$0} LOG_GROUP_NAME [START_TIME]"
+  exit
+end
+
+client = Aws::CloudWatchLogs::Client.new
+log_streams = []
+
+next_token = nil
+begin
+  params = {
+    log_group_name: ARGV[0],
+    order_by: "LastEventTime", # accepts LogStreamName, LastEventTime
+    descending: true,
+  }
+  params[:next_token] = next_token if next_token
+  resp = client.describe_log_streams(params)
+  next_token = resp.next_token
+  log_streams += resp.log_streams
+end while next_token
+
+events = []
+
+if ARGV[1]
+  start_time = Time.parse(ARGV[1])
+end
+
+if start_time
+  log_streams.reject! do |stream|
+    stream.last_event_timestamp < start_time.to_i * 1000
+  end
+end
+
+log_streams.map do |stream|
+  next_token = nil
+  while true
+    params = {
+      log_group_name: ARGV[0],
+      log_stream_name: stream.log_stream_name,
+    }
+    params[:next_token] = next_token if next_token
+    params[:start_time] = start_time.to_i * 1000 if start_time
+
+    resp = client.get_log_events(params)
+    break if resp.events.empty?
+    events += resp.events
+    next_token = resp.next_backward_token
+  end
+end
+
+events.sort_by do |e|
+  e.timestamp
+end.each do |e|
+  time = Time.at(e.timestamp / 1000)
+  puts "#{time}: #{e.message}"
+end
+
+puts "(#{events.size} events)"
+
+
