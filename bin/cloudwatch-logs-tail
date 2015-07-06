@@ -56,7 +56,7 @@ events.sort_by do |e|
   e.timestamp
 end.each do |e|
   time = Time.at(e.timestamp / 1000)
-  puts "#{time}: #{e.message}"
+  puts "\e[43m\e[30m#{time}\e[0m #{e.message}"
 end
 
 puts "(#{events.size} events)"
