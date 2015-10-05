@@ -9,17 +9,21 @@ resp = ec2.describe_images(
 )
 
 resp.images.each do |i|
+  unless i.root_device_type == 'ebs'
+    puts "This script only supports EBS-backed AMI. Skip #{i.image_id}"
+    next
+  end
+
   print "#{i.image_id} (#{i.name}) and its EBS snapshot will be deleted. Are you sure?: "
   abort unless $stdin.gets.start_with?('y')
-
-  next unless i.root_device_type == 'ebs'
-  device = i.block_device_mappings.find {|m| m.device_name == i.root_device_name }
-  snapshot_id = device.ebs.snapshot_id
 
   puts "Deregistering #{i.image_id}..."
   resp = ec2.deregister_image({
     image_id: i.image_id,
   })
+
+  device = i.block_device_mappings.find {|m| m.device_name == i.root_device_name }
+  snapshot_id = device.ebs.snapshot_id
 
   puts "Deleting #{snapshot_id}..."
   resp = ec2.delete_snapshot({
