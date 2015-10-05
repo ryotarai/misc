@@ -1,0 +1,28 @@
+#!/usr/bin/env ruby
+
+require 'aws-sdk'
+ec2 = Aws::EC2::Client.new
+resp = ec2.describe_images(
+  filters: [
+    {name: "name", values: ARGV}
+  ],
+)
+
+resp.images.each do |i|
+  print "#{i.image_id} (#{i.name}) and its EBS snapshot will be deleted. Are you sure?: "
+  abort unless $stdin.gets.start_with?('y')
+
+  next unless i.root_device_type == 'ebs'
+  device = i.block_device_mappings.find {|m| m.device_name == i.root_device_name }
+  snapshot_id = device.ebs.snapshot_id
+
+  puts "Deregistering #{i.image_id}..."
+  resp = ec2.deregister_image({
+    image_id: i.image_id,
+  })
+
+  puts "Deleting #{snapshot_id}..."
+  resp = ec2.delete_snapshot({
+    snapshot_id: snapshot_id,
+  })
+end
