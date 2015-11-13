@@ -1,6 +1,14 @@
 #!/usr/bin/env ruby
 
 require 'aws-sdk'
+
+yes = ARGV.delete('-y')
+execute = ARGV.delete('-x')
+
+unless execute
+  puts "(dry run mode)"
+end
+
 ec2 = Aws::EC2::Client.new
 resp = ec2.describe_images(
   filters: [
@@ -14,19 +22,26 @@ resp.images.each do |i|
     next
   end
 
-  print "#{i.image_id} (#{i.name}) and its EBS snapshot will be deleted. Are you sure?: "
-  abort unless $stdin.gets.start_with?('y')
+  puts "#{i.image_id} (#{i.name}) and its EBS snapshot will be deleted."
+  unless yes
+    print "Are you sure?: "
+    abort unless $stdin.gets.start_with?('y')
+  end
 
   puts "Deregistering #{i.image_id}..."
-  resp = ec2.deregister_image({
-    image_id: i.image_id,
-  })
+  if execute
+    resp = ec2.deregister_image({
+      image_id: i.image_id,
+    })
+  end
 
   device = i.block_device_mappings.find {|m| m.device_name == i.root_device_name }
   snapshot_id = device.ebs.snapshot_id
 
   puts "Deleting #{snapshot_id}..."
-  resp = ec2.delete_snapshot({
-    snapshot_id: snapshot_id,
-  })
+  if execute
+    resp = ec2.delete_snapshot({
+      snapshot_id: snapshot_id,
+    })
+  end
 end
