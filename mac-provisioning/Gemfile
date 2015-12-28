@@ -1,0 +1,4 @@
+source 'https://rubygems.org'
+
+gem 'itamae'
+gem 'itamae-plugin-resource-cask', path: '/Users/ryota-arai/src/github.com/k0kubun/itamae-plugin-resource-cask'
