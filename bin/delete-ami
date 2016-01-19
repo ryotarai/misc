@@ -23,7 +23,7 @@ resp.images.each do |i|
   end
 
   puts "#{i.image_id} (#{i.name}) and its EBS snapshot will be deleted."
-  unless yes
+  if !yes && execute
     print "Are you sure?: "
     abort unless $stdin.gets.start_with?('y')
   end
