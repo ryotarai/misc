@@ -1,0 +1,56 @@
+# result = ""; Array.prototype.forEach.call(document.querySelectorAll("#allServices a"), function(a) { result += a.querySelector("span.service-label").innerText + "\t" + a.href.replace("?region=ap-northeast-1", "").replace("://ap-northeast-1.", "://") + "\n" }); console.log(result)
+API Gateway	https://console.aws.amazon.com/apigateway/home
+AppStream	https://console.aws.amazon.com/appstream/home
+AWS IoT	https://console.aws.amazon.com/iot/home
+Certificate Manager	https://console.aws.amazon.com/acm/home
+CloudFormation	https://console.aws.amazon.com/cloudformation/home
+CloudFront	https://console.aws.amazon.com/cloudfront/home
+CloudSearch	https://console.aws.amazon.com/cloudsearch/home
+CloudTrail	https://console.aws.amazon.com/cloudtrail/home
+CloudWatch	https://console.aws.amazon.com/cloudwatch/home
+CodeCommit	https://console.aws.amazon.com/codecommit/home
+CodeDeploy	https://console.aws.amazon.com/codedeploy/home
+CodePipeline	https://console.aws.amazon.com/codepipeline/home
+Cognito	https://console.aws.amazon.com/cognito/home
+Config	https://console.aws.amazon.com/config/home
+Data Pipeline	https://console.aws.amazon.com/datapipeline/home
+Device Farm	https://console.aws.amazon.com/devicefarm/home
+Direct Connect	https://console.aws.amazon.com/directconnect/home
+Directory Service	https://console.aws.amazon.com/directoryservice/home
+DMS	https://console.aws.amazon.com/dms/home
+DynamoDB	https://console.aws.amazon.com/dynamodb/home
+EC2	https://console.aws.amazon.com/ec2/v2/home
+EC2 Container Service	https://console.aws.amazon.com/ecs/home
+Elastic Beanstalk	https://console.aws.amazon.com/elasticbeanstalk/home
+Elastic File System	https://console.aws.amazon.com/efs/home
+Elastic Transcoder	https://console.aws.amazon.com/elastictranscoder/home
+ElastiCache	https://console.aws.amazon.com/elasticache/home
+Elasticsearch Service	https://console.aws.amazon.com/es/home
+EMR	https://console.aws.amazon.com/elasticmapreduce/home
+GameLift	https://console.aws.amazon.com/gamelift/home
+Glacier	https://console.aws.amazon.com/glacier/home
+IAM	https://console.aws.amazon.com/iam/home
+Import/Export Snowball	https://console.aws.amazon.com/importexport/home
+Inspector	https://console.aws.amazon.com/inspector/home
+Kinesis	https://console.aws.amazon.com/kinesis/home
+Lambda	https://console.aws.amazon.com/lambda/home
+Machine Learning	https://console.aws.amazon.com/machinelearning/home
+Mobile Analytics	https://console.aws.amazon.com/mobileanalytics/home
+Mobile Hub	https://console.aws.amazon.com/mobilehub/home
+OpsWorks	https://console.aws.amazon.com/opsworks/home
+RDS	https://console.aws.amazon.com/rds/home
+Redshift	https://console.aws.amazon.com/redshift/home
+Route 53	https://console.aws.amazon.com/route53/home
+S3	https://console.aws.amazon.com/s3/home
+Service Catalog	https://console.aws.amazon.com/catalog/home
+SES	https://console.aws.amazon.com/ses/home
+SNS	https://console.aws.amazon.com/sns/home
+SQS	https://console.aws.amazon.com/sqs/home
+Storage Gateway	https://console.aws.amazon.com/storagegateway/home
+SWF	https://console.aws.amazon.com/swf/home
+Trusted Advisor	https://console.aws.amazon.com/trustedadvisor/home
+VPC	https://console.aws.amazon.com/vpc/home
+WAF	https://console.aws.amazon.com/waf/home
+WorkDocs	https://console.aws.amazon.com/zocalo/home
+WorkMail	https://console.aws.amazon.com/workmail/home
+WorkSpaces	https://console.aws.amazon.com/workspaces/home
