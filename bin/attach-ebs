@@ -1,0 +1,54 @@
+#!/usr/bin/env ruby
+def describe_instance(ec2, id)
+  resp = ec2.describe_instances({
+    instance_ids: [id],
+  })
+  resp.reservations[0].instances[0]
+end
+
+def describe_volume(ec2, id)
+  resp = ec2.describe_volumes({
+    volume_ids: [id],
+  })
+  resp.volumes[0]
+end
+
+unless ARGV.size == 3
+  puts "Usage: #{$0} VOLUME_ID ATTACH_TO_INSTANCE_ID DEV"
+  abort
+end
+volume_id, attach_to_id, dev = ARGV
+
+require 'aws-sdk-core'
+ec2 = Aws::EC2::Client.new
+volume = describe_volume(ec2, volume_id)
+detach_from = if volume.state == 'in-use'
+                describe_instance(ec2, volume.attachments[0].instance_id)
+              end
+attach_to = describe_instance(ec2, attach_to_id)
+
+puts "The following actions will be executed:"
+if detach_from
+  puts "- Detaching #{volume_id} from #{detach_from.tags.find {|t| t.key == 'Name' }.value}"
+end
+puts "- Attaching #{volume_id} to #{attach_to.tags.find {|t| t.key == 'Name' }.value} #{dev}"
+puts
+print "Are you sure?: "
+unless $stdin.gets.start_with?('y')
+  puts "abort"
+  abort
+end
+
+if detach_from
+  ec2.detach_volume(
+    volume_id: volume_id,
+  )
+end
+ec2.wait_until(:volume_available, volume_ids: [volume_id])
+ec2.attach_volume({
+  volume_id: volume_id,
+  instance_id: attach_to_id,
+  device: dev,
+})
+
+puts "done"
