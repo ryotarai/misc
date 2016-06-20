@@ -25,6 +25,8 @@ cask "moom"
 cask "appcleaner"
 cask "night-owl"
 cask "slack"
+cask "virtualbox"
+cask "vagrant"
 cask "sourcetree" do
   options cask_options
 end
