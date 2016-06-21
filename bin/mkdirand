@@ -1,0 +1,4 @@
+#!/bin/sh
+for last; do true; done
+mkdir -p $(dirname $last)
+exec "$@"
