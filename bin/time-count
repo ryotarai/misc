@@ -11,7 +11,8 @@ optparser.on('-l VAL') {|v| $options[:limit] = v.to_i }
 optparser.parse!(ARGV)
 
 unless $options.has_key?(:time_format)
-  raise '-t is required'
+  puts "USAGE: #{$0} -t TIMEFORMAT -i IGNOREPATTERN -l LIMIT"
+  abort
 end
 
 ignore_pattern = $options[:ignore] && Regexp.new($options[:ignore])
