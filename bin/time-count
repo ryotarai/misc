@@ -1,0 +1,35 @@
+#!/usr/bin/env ruby
+require 'strptime'
+require 'optparse'
+
+$options = {}
+
+optparser = OptionParser.new
+optparser.on('-t VAL') {|v| $options[:time_format] = v }
+optparser.on('-i VAL') {|v| $options[:ignore] = v }
+optparser.on('-l VAL') {|v| $options[:limit] = v.to_i }
+optparser.parse!(ARGV)
+
+unless $options.has_key?(:time_format)
+  raise '-t is required'
+end
+
+ignore_pattern = $options[:ignore] && Regexp.new($options[:ignore])
+
+count = Hash.new {|h, k| h[k] = Hash.new {|hh, kk| hh[kk] = 0 } }
+parser = Strptime.new('%Y-%m-%dT%H:%M:%S%z')
+
+$stdin.each_line do |line|
+  t, v = line.chomp.split("\t")
+  t = parser.exec(t)
+  next if ignore_pattern && ignore_pattern.match(v)
+  count[t.strftime($options[:time_format])][v] += 1
+end
+
+count.sort_by {|t, _| t }.each do |t, v|
+  tmp = v.sort_by {|_, n| n }.reverse
+  tmp = tmp.first($options[:limit]) if $options[:limit]
+  tmp.each do |vv, n|
+    puts "#{t}\t#{vv}\t#{n}"
+  end
+end

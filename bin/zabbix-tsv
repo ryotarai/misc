@@ -1,0 +1,33 @@
+#!/usr/bin/env ruby
+require 'zabbix/client'
+
+client = Zabbix::Client.new("#{ENV['ZABBIX_URL']}/api_jsonrpc.php")
+
+client.user.login(user: ENV['ZABBIX_USER'], password: ENV['ZABBIX_PASSWORD'])
+
+now = Time.now
+resp = client.history.get(history: 0, hostids: [ARGV[0].to_i], itemids: [ARGV[1].to_i])#, time_from: now.to_i - 24*60*60, time_till: now.to_i)
+
+#resp.each do |r|
+#  t = Time.at(r["clock"].to_i)
+#  #puts "#{t.strftime("%Y-%m-%d %H:%M:%S")}\t#{r['value']}"
+#  puts "#{t.to_i}\t#{r['value']}"
+#end
+
+start_t = nil
+count = 0
+sum = 0
+resp.each do |r|
+  t = Time.at(r["clock"].to_i)
+  start_t ||= t
+  if t - start_t < 60 * 10
+    count += 1
+    sum += r["value"].to_f
+  else
+    puts "#{start_t}\t#{sum / count.to_f}"
+    start_t = t
+    count = 1
+    sum = r["value"].to_f
+  end
+end
+
