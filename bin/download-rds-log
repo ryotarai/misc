@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+require 'aws-sdk-core'
+require 'peco_selector'
+
+rds = Aws::RDS::Client.new
+
+candidates = []
+rds.describe_db_instances.each do |page|
+  page.db_instances.each do |i|
+    candidates << [i.db_instance_identifier, i.db_instance_identifier]
+  end
+end
+result = PecoSelector.select_from(candidates)
+db_instance_identifier = result.first
+
+log_files = []
+rds.describe_db_log_files(db_instance_identifier: db_instance_identifier).each do |page|
+  page.describe_db_log_files.each do |f|
+    log_files << f
+  end
+end
+
+candidates = []
+log_files.sort_by do |f|
+  f.last_written
+end.reverse_each do |f|
+  candidates << ["#{f.log_file_name} (#{Time.at(f.last_written / 1000.0)}, size: #{f.size})", f.log_file_name]
+end
+result = PecoSelector.select_from(candidates)
+log_file_name = result.first
+
+dest = File.basename(log_file_name)
+if File.exist?(dest)
+  puts "#{dest} already exist"
+  exit
+end
+
+puts "Saving to #{dest}..."
+open(dest, 'w') do |f|
+  rds.download_db_log_file_portion(db_instance_identifier: db_instance_identifier, log_file_name: log_file_name).each do |page|
+    f.write page.log_file_data
+  end
+end
