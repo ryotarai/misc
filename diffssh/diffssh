@@ -1,0 +1,56 @@
+#!/usr/bin/env ruby
+require 'pathname'
+require 'shellwords'
+require 'diffy'
+
+Diffy::Diff.default_format = :color
+
+def ssh(host, command)
+  body = IO.popen(['ssh', host, command]) do |io|
+    io.read.chomp
+  end
+
+  unless $?.exitstatus == 0
+    raise
+  end
+
+  body
+end
+
+unless ARGV.size == 2
+  puts 'USAGE: diffssh HOSTA:DIRA HOSTB:DIRB'
+  abort
+end
+
+a, b = ARGV
+host_a, dir_a = a.split(':')
+host_b, dir_b = b.split(':')
+
+dir_a = Pathname.new(dir_a)
+dir_b = Pathname.new(dir_b)
+
+paths_a = ssh(host_a, "find #{dir_a.to_s.shellescape} -type f").split("\n").map {|path| Pathname.new(path) }
+paths_b = ssh(host_b, "find #{dir_b.to_s.shellescape} -type f").split("\n").map {|path| Pathname.new(path) }
+
+relative_paths_a = paths_a.map {|path| path.relative_path_from(dir_a) }
+relative_paths_b = paths_b.map {|path| path.relative_path_from(dir_b) }
+
+diff = relative_paths_a - relative_paths_b
+unless diff.empty?
+  puts "only in #{host_a}: #{diff}"
+end
+
+diff = relative_paths_b - relative_paths_a
+unless diff.empty?
+  puts "only in #{host_b}: #{diff}"
+end
+
+intersection = relative_paths_a & relative_paths_b
+intersection.each do |i|
+  puts "==> #{i}"
+  body_a = ssh(host_a, "cat #{dir_a.join(i).to_s.shellescape}")
+  body_b = ssh(host_b, "cat #{dir_b.join(i).to_s.shellescape}")
+
+  puts Diffy::Diff.new(body_a, body_b).to_s
+  puts
+end
