@@ -51,6 +51,6 @@ intersection.each do |i|
   body_a = ssh(host_a, "cat #{dir_a.join(i).to_s.shellescape}")
   body_b = ssh(host_b, "cat #{dir_b.join(i).to_s.shellescape}")
 
-  puts Diffy::Diff.new(body_a, body_b).to_s
+  puts Diffy::Diff.new(body_a, body_b, context: 3, include_diff_info: true).to_s
   puts
 end
