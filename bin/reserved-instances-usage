@@ -1,0 +1,71 @@
+#!/usr/bin/env ruby
+require 'aws-sdk-core'
+require 'pp'
+require 'set'
+
+@ec2 = Aws::EC2::Client.new
+
+az_ri_count_by_type = Hash.new {|h, k| h[k] = Hash.new {|h, k| h[k] =  0 } }
+regional_ri_count_by_type = Hash.new {|h, k| h[k] =  0 }
+ri_instance_types = Set.new
+
+resp = @ec2.describe_reserved_instances(
+  filters: [
+    {name: 'state', values: ['active']},
+  ],
+)
+resp.reserved_instances.each do |ri|
+  case ri.scope
+  when 'Availability Zone'
+    az_ri_count_by_type[ri.availability_zone][ri.instance_type] += ri.instance_count
+  when 'Region'
+    regional_ri_count_by_type[ri.instance_type] += ri.instance_count
+  end
+
+  ri_instance_types << ri.instance_type
+end
+
+
+running_count_by_type = Hash.new {|h, k| h[k] = Hash.new {|h, k| h[k] =  0 } }
+
+resp = @ec2.describe_instances(
+  filters: [
+    {name: 'instance-state-name', values: ['running']},
+    {name: 'instance-type', values: ri_instance_types},
+  ],
+)
+instances = resp.flat_map do |page|
+  page.reservations.flat_map {|r| r.instances }
+end
+instances.each do |i|
+  if i.instance_lifecycle.nil?
+    running_count_by_type[i.placement.availability_zone][i.instance_type] += 1
+  end
+end
+
+pp running_count_by_type
+pp regional_ri_count_by_type
+
+az_ri_count_by_type.each do |az, a|
+  a.each do |type, count|
+    d = [running_count_by_type[az][type], count].min
+    running_count_by_type[az][type] -= d
+    az_ri_count_by_type[az][type] -= d
+  end
+end
+
+regional_ri_count_by_type.each do |type, count|
+  running_count_by_type.each do |az, a|
+    d = [a[type], count].min
+    a[type] -= d
+    count -= d
+  end
+  regional_ri_count_by_type[type] = count
+end
+
+puts '== Running instances that are out of RI'
+pp running_count_by_type
+puts '== Unused AZ RI'
+pp az_ri_count_by_type
+puts '== Unused regional RI'
+pp regional_ri_count_by_type
