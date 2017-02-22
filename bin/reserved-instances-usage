@@ -43,9 +43,6 @@ instances.each do |i|
   end
 end
 
-pp running_count_by_type
-pp regional_ri_count_by_type
-
 az_ri_count_by_type.each do |az, a|
   a.each do |type, count|
     d = [running_count_by_type[az][type], count].min
