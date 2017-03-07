@@ -26,23 +26,25 @@ a, b = ARGV
 host_a, dir_a = a.split(':')
 host_b, dir_b = b.split(':')
 
+puts "Comparing #{dir_a} on #{host_a} and #{dir_b} on #{host_b}"
+
 dir_a = Pathname.new(dir_a)
 dir_b = Pathname.new(dir_b)
 
-paths_a = ssh(host_a, "find #{dir_a.to_s.shellescape} -type f").split("\n").map {|path| Pathname.new(path) }
-paths_b = ssh(host_b, "find #{dir_b.to_s.shellescape} -type f").split("\n").map {|path| Pathname.new(path) }
+paths_a = ssh(host_a, "find #{dir_a.to_s.shellescape} -type f -or -type l").split("\n").map {|path| Pathname.new(path) }
+paths_b = ssh(host_b, "find #{dir_b.to_s.shellescape} -type f -or -type l").split("\n").map {|path| Pathname.new(path) }
 
 relative_paths_a = paths_a.map {|path| path.relative_path_from(dir_a) }
 relative_paths_b = paths_b.map {|path| path.relative_path_from(dir_b) }
 
 diff = relative_paths_a - relative_paths_b
 unless diff.empty?
-  puts "only in #{host_a}: #{diff}"
+  puts "only in #{host_a}: #{diff.map(&:to_s)}"
 end
 
 diff = relative_paths_b - relative_paths_a
 unless diff.empty?
-  puts "only in #{host_b}: #{diff}"
+  puts "only in #{host_b}: #{diff.map(&:to_s)}"
 end
 
 intersection = relative_paths_a & relative_paths_b
