@@ -100,7 +100,7 @@ func main() {
 
 	formatter := chart.FloatValueFormatter
 	if *timeseries {
-		formatter = chart.TimeMinuteValueFormatter
+		formatter = chart.TimeValueFormatterWithFormat("2006-01-02 15:04:05")
 	}
 
 	graph := chart.Chart{
