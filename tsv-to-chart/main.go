@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wcharczuk/go-chart"
 	"github.com/wcharczuk/go-chart/drawing"
@@ -29,6 +30,7 @@ func getColors(alpha uint8) []drawing.Color {
 func main() {
 	alpha := flag.Int("alpha", 255, "Alpha value for stroke color (0-255, default: 255)")
 	outpath := flag.String("out", "out.png", "Path to output file (default: out.png)")
+	timeseries := flag.Bool("timeseries", false, "Treat as timeseries data (default: false)")
 	flag.Parse()
 
 	colors := getColors(uint8(*alpha))
@@ -66,17 +68,39 @@ func main() {
 		}
 
 		name := filepath.Base(path)
-
 		color := colors[i%len(colors)]
-		series = append(series, chart.ContinuousSeries{
-			Name:    name,
-			XValues: xs,
-			YValues: ys,
-			Style: chart.Style{
-				Show:        true,
-				StrokeColor: color,
-			},
-		})
+
+		if *timeseries {
+			txs := []time.Time{}
+			for _, x := range xs {
+				t := time.Unix(0, int64(x*1000*1000*1000))
+				txs = append(txs, t)
+			}
+			series = append(series, chart.TimeSeries{
+				Name:    name,
+				XValues: txs,
+				YValues: ys,
+				Style: chart.Style{
+					Show:        true,
+					StrokeColor: color,
+				},
+			})
+		} else {
+			series = append(series, chart.ContinuousSeries{
+				Name:    name,
+				XValues: xs,
+				YValues: ys,
+				Style: chart.Style{
+					Show:        true,
+					StrokeColor: color,
+				},
+			})
+		}
+	}
+
+	formatter := chart.FloatValueFormatter
+	if *timeseries {
+		formatter = chart.TimeMinuteValueFormatter
 	}
 
 	graph := chart.Chart{
@@ -84,6 +108,7 @@ func main() {
 			Style: chart.Style{
 				Show: true,
 			},
+			ValueFormatter: formatter,
 		},
 		YAxis: chart.YAxis{
 			Style: chart.Style{
