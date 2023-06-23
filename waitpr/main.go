@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,9 @@ func run() error {
 		return fmt.Errorf("usage: waitpr URL")
 	}
 	pr := args[0]
+	if !strings.HasPrefix(pr, "https://github.com/") {
+		return fmt.Errorf("usage: waitpr URL")
+	}
 
 	timeout, err := time.ParseDuration(*timeoutStr)
 	if err != nil {
