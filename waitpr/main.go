@@ -20,6 +20,7 @@ func main() {
 
 func run() error {
 	timeoutStr := flag.String("timeout", "1h", "timeout")
+	// merge := flag.Bool("merge", false, "auto merge")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) != 1 {
@@ -39,6 +40,13 @@ func run() error {
 		return err
 	}
 
+	// if *merge {
+	// 	log.Printf("Merging %s ...", pr)
+	// 	if err := exec.Command("gh", "pr", "merge", pr).Run(); err != nil {
+	// 		return err
+	// 	}
+	// }
+
 	if err := exec.Command("open", pr).Run(); err != nil {
 		return err
 	}
@@ -52,7 +60,7 @@ func run() error {
 
 func waitPR(pr string, timeout time.Duration) error {
 	startAt := time.Now()
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(time.Second * 30)
 	defer ticker.Stop()
 	for {
 		var output StatusCheckRollupOutput
@@ -75,7 +83,7 @@ func waitPR(pr string, timeout time.Duration) error {
 			}
 		}
 		log.Printf("%d/%d completed", completed, len(output.StatusChecks))
-		if completed == len(output.StatusChecks) {
+		if len(output.StatusChecks) > 0 && completed == len(output.StatusChecks) {
 			return nil
 		}
 		if timeout < time.Since(startAt) {

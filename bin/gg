@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 DIR="$(cd "$(dirname "$0")"; pwd)"
-cd "$DIR/../waitpr"
-exec go run . "$@"
+(cd "$DIR/../gg" && make build)
+exec "$DIR/../gg/bin/gg" "$@"
