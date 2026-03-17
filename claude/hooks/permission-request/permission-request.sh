@@ -85,7 +85,7 @@ CLAUDECODE= claude --model claude-haiku-4-5-20251001 -p "$prompt" --output-forma
 claude_pid=$!
 
 # Wait with timeout
-timeout_seconds=15
+timeout_seconds=30
 elapsed=0
 while kill -0 "$claude_pid" 2>/dev/null; do
     if [ "$elapsed" -ge "$timeout_seconds" ]; then
