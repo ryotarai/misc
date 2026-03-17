@@ -3,8 +3,12 @@
 # Permission Request Hook with Haiku Risk Evaluation
 # Reads tool call info from stdin, uses Claude Haiku to evaluate risk level,
 # auto-approves low/very_low risk operations, and falls back to manual dialog for others.
+# Maintains a history of manual decisions (last 100) to improve future risk evaluation.
 
 set -euo pipefail
+
+HISTORY_FILE="$HOME/.claude/permission-history.jsonl"
+HISTORY_MAX=100
 
 # Read JSON input from stdin
 input=$(cat)
@@ -14,6 +18,25 @@ tool_name=$(echo "$input" | jq -r '.tool_name // "unknown"')
 tool_input=$(echo "$input" | jq -r '.tool_input // "{}"' | head -c 1000)
 
 # --- Helper functions ---
+
+record_decision() {
+    local decision="$1"
+    local risk_level="$2"
+    local entry
+    entry=$(jq -n --arg tool "$tool_name" --arg input "$tool_input" --arg decision "$decision" --arg risk "$risk_level" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{timestamp: $ts, tool_name: $tool, tool_input: ($input | truncate_stream(200) // $input), decision: $decision, risk_level: $risk}' 2>/dev/null || \
+        jq -n --arg tool "$tool_name" --arg input "${tool_input:0:200}" --arg decision "$decision" --arg risk "$risk_level" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{timestamp: $ts, tool_name: $tool, tool_input: $input, decision: $decision, risk_level: $risk}')
+    echo "$entry" >> "$HISTORY_FILE"
+    # Trim to last HISTORY_MAX entries
+    local count
+    count=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$count" -gt "$HISTORY_MAX" ]; then
+        local tmp
+        tmp=$(mktemp "${TMPDIR:-/tmp}/permission-history-XXXXXX")
+        tail -n "$HISTORY_MAX" "$HISTORY_FILE" > "$tmp" && mv "$tmp" "$HISTORY_FILE"
+    fi
+}
 
 approve() {
     local risk_level="${1:-unknown}"
@@ -53,12 +76,21 @@ APPLESCRIPT
     rm -f "$tmpscript"
 
     if [ "$result" = "approved" ]; then
+        record_decision "approve" "$risk_level"
         echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
     else
+        record_decision "deny" "$risk_level"
         echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}'
     fi
     exit 0
 }
+
+# --- Build history context for prompt ---
+
+history_context=""
+if [ -f "$HISTORY_FILE" ]; then
+    history_context=$(tail -n "$HISTORY_MAX" "$HISTORY_FILE" | jq -r '"- \(.decision): \(.tool_name) \(.tool_input | tostring | .[0:100])"' 2>/dev/null || true)
+fi
 
 # --- Risk evaluation via Claude Haiku ---
 
@@ -71,12 +103,21 @@ Risk criteria:
 - low: Minor side effects, easily reversible (mkdir, cp, git add, git commit, file edits, Write, Edit tools)
 - medium: Moderate side effects, network writes (git push (non-force), npm install, pip install, docker run)
 - high: Destructive or hard to reverse (rm -rf, git reset --hard, git push --force, DROP TABLE, connections to untrusted internet endpoints)
-- very_high: Extremely dangerous (rm -rf /, curl|bash from untrusted URL, sudo on system files)
+- very_high: Extremely dangerous (rm -rf /, curl|bash from untrusted URL, sudo on system files)"
+
+if [ -n "$history_context" ]; then
+    prompt="$prompt
+
+Here are recent manual decisions by the user (approve/deny) for reference. Use these to understand the user's preferences:
+$history_context"
+fi
+
+prompt="$prompt
 
 Tool name: $tool_name
 Tool input: $tool_input"
 
-# Call claude with a 15-second timeout using background process approach (macOS compatible)
+# Call claude with a 30-second timeout using background process approach (macOS compatible)
 tmpout=$(mktemp "${TMPDIR:-/tmp}/claude-risk-XXXXXX")
 
 # Run claude in background with JSON schema for structured output
