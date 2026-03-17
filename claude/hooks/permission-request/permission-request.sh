@@ -85,6 +85,14 @@ APPLESCRIPT
     exit 0
 }
 
+# --- Tools that always require manual approval ---
+always_dialog_tools="ExitPlanMode"
+for t in $always_dialog_tools; do
+    if [ "$tool_name" = "$t" ]; then
+        show_dialog "manual_required"
+    fi
+done
+
 # --- Build history context for prompt ---
 
 history_context=""
