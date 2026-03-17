@@ -56,9 +56,9 @@ on run argv
     set toolName to item 1 of argv
     set toolInput to item 2 of argv
     set riskLevel to item 3 of argv
-    set dialogText to "Risk: " & riskLevel & return & "Tool: " & toolName
+    set dialogText to "Risk: " & riskLevel & return & "Tool: " & toolName & return & return & toolInput
     try
-        display dialog dialogText with title "Claude Code Permission Request" default answer toolInput buttons {"Deny", "Approve"} default button "Approve"
+        display dialog dialogText with title "Claude Code Permission Request" buttons {"Deny", "Approve"} default button "Approve"
         set theResult to result
         if button returned of theResult is "Approve" then
             return "approved"
@@ -96,7 +96,7 @@ fi
 
 json_schema='{"type":"object","properties":{"risk_level":{"type":"string","enum":["very_low","low","medium","high","very_high"]}},"required":["risk_level"]}'
 
-prompt="You are a security risk classifier for CLI tool calls. Evaluate the risk level of the following tool call.
+system_prompt="You are a security risk classifier. Classify the risk level of the given tool call. Do NOT use any tools. Respond immediately with the structured output only.
 
 Risk criteria:
 - very_low: Read-only, no side effects (ls, cat, git status, git diff, git log, grep, Read, Glob, Grep, LS tools)
@@ -105,24 +105,22 @@ Risk criteria:
 - high: Destructive or hard to reverse (rm -rf, git reset --hard, git push --force, DROP TABLE, connections to untrusted internet endpoints)
 - very_high: Extremely dangerous (rm -rf /, curl|bash from untrusted URL, sudo on system files)"
 
-if [ -n "$history_context" ]; then
-    prompt="$prompt
+user_prompt="Tool name: $tool_name
+Tool input: $tool_input"
 
-Here are recent manual decisions by the user (approve/deny) for reference. Use these to understand the user's preferences:
+if [ -n "$history_context" ]; then
+    user_prompt="$user_prompt
+
+Recent manual decisions by the user (approve/deny) for reference:
 $history_context"
 fi
-
-prompt="$prompt
-
-Tool name: $tool_name
-Tool input: $tool_input"
 
 # Call claude with a 30-second timeout using background process approach (macOS compatible)
 tmpout=$(mktemp "${TMPDIR:-/tmp}/claude-risk-XXXXXX")
 
 # Run claude in background with JSON schema for structured output
 # Unset CLAUDECODE to allow running claude inside a Claude Code session
-CLAUDECODE= claude --model claude-haiku-4-5-20251001 -p "$prompt" --output-format json --json-schema "$json_schema" < /dev/null > "$tmpout" 2>/dev/null &
+CLAUDECODE= claude --model claude-haiku-4-5-20251001 -p "$user_prompt" --system-prompt "$system_prompt" --output-format json --json-schema "$json_schema" --no-session-persistence < /dev/null > "$tmpout" 2>/dev/null &
 claude_pid=$!
 
 # Wait with timeout
