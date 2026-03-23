@@ -234,6 +234,29 @@ type EditToolInput struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
+func computeDiff(oldStr, newStr string) string {
+	oldFile, err := os.CreateTemp("", "diff-old-*")
+	if err != nil {
+		return "- " + oldStr + "\n+ " + newStr
+	}
+	defer os.Remove(oldFile.Name())
+
+	newFile, err := os.CreateTemp("", "diff-new-*")
+	if err != nil {
+		return "- " + oldStr + "\n+ " + newStr
+	}
+	defer os.Remove(newFile.Name())
+
+	oldFile.WriteString(oldStr)
+	oldFile.Close()
+	newFile.WriteString(newStr)
+	newFile.Close()
+
+	out, _ := exec.Command("diff", "-u", oldFile.Name(), newFile.Name()).Output()
+	// diff exits 1 when files differ, that's expected
+	return string(out)
+}
+
 func formatEditDiff(raw string) fyne.CanvasObject {
 	var edit EditToolInput
 	if err := json.Unmarshal([]byte(raw), &edit); err != nil {
@@ -246,6 +269,7 @@ func formatEditDiff(raw string) fyne.CanvasObject {
 	red := color.NRGBA{R: 200, G: 50, B: 50, A: 255}
 	green := color.NRGBA{R: 50, G: 160, B: 50, A: 255}
 	gray := color.NRGBA{R: 140, G: 140, B: 140, A: 255}
+	white := color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 
 	var objects []fyne.CanvasObject
 
@@ -263,17 +287,27 @@ func formatEditDiff(raw string) fyne.CanvasObject {
 
 	objects = append(objects, widget.NewSeparator())
 
-	// Old string lines (red, prefixed with -)
-	for _, line := range strings.Split(edit.OldString, "\n") {
-		t := canvas.NewText("- "+line, red)
-		t.TextStyle = monoStyle
-		t.TextSize = 13
-		objects = append(objects, t)
-	}
+	// Run diff -u and parse output
+	diffOutput := computeDiff(edit.OldString, edit.NewString)
+	for _, line := range strings.Split(diffOutput, "\n") {
+		// Skip unified diff header lines
+		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
+			continue
+		}
 
-	// New string lines (green, prefixed with +)
-	for _, line := range strings.Split(edit.NewString, "\n") {
-		t := canvas.NewText("+ "+line, green)
+		var c color.Color
+		switch {
+		case strings.HasPrefix(line, "-"):
+			c = red
+		case strings.HasPrefix(line, "+"):
+			c = green
+		case strings.HasPrefix(line, "@@"):
+			c = gray
+		default:
+			c = white
+		}
+
+		t := canvas.NewText(line, c)
 		t.TextStyle = monoStyle
 		t.TextSize = 13
 		objects = append(objects, t)
