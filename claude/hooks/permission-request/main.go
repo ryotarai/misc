@@ -268,8 +268,8 @@ func formatEditDiff(raw string) fyne.CanvasObject {
 	monoStyle := fyne.TextStyle{Monospace: true}
 	red := color.NRGBA{R: 200, G: 50, B: 50, A: 255}
 	green := color.NRGBA{R: 50, G: 160, B: 50, A: 255}
-	gray := color.NRGBA{R: 140, G: 140, B: 140, A: 255}
-	white := color.NRGBA{R: 220, G: 220, B: 220, A: 255}
+	gray := color.NRGBA{R: 100, G: 100, B: 100, A: 255}
+	white := color.NRGBA{R: 180, G: 180, B: 180, A: 255}
 
 	var objects []fyne.CanvasObject
 
