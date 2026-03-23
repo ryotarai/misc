@@ -17,6 +17,9 @@ input=$(cat)
 tool_name=$(echo "$input" | jq -r '.tool_name // "unknown"')
 tool_input=$(echo "$input" | jq -r '.tool_input // "{}"' | head -c 1000)
 
+# Debug log
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) tool_name=$tool_name input=$input" >> "$HOME/.claude/permission-debug.log"
+
 # --- Helper functions ---
 
 record_decision() {
@@ -86,12 +89,20 @@ APPLESCRIPT
 }
 
 # --- Tools that always require manual approval ---
-always_dialog_tools="ExitPlanMode"
+always_dialog_tools="ExitPlanMode AskUserQuestion"
 for t in $always_dialog_tools; do
     if [ "$tool_name" = "$t" ]; then
         show_dialog "manual_required"
     fi
 done
+
+# --- Auto-approve gcloud read-only commands ---
+if [ "$tool_name" = "Bash" ]; then
+    gcloud_cmd=$(echo "$tool_input" | jq -r '.command // ""')
+    if echo "$gcloud_cmd" | grep -qE '^gcloud\s+.*\s+(list|describe|get)(\s|$)'; then
+        approve "gcloud_read"
+    fi
+fi
 
 # --- Build history context for prompt ---
 
