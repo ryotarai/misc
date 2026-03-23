@@ -16,6 +16,7 @@ void moveWindowToBottomRight() {
 			origin.x = screenFrame.origin.x + screenFrame.size.width - windowFrame.size.width;
 			origin.y = screenFrame.origin.y;
 			[window setFrameOrigin:origin];
+			[window setLevel:NSFloatingWindowLevel];
 			break;
 		}
 	}
