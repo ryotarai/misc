@@ -25,9 +25,10 @@ import (
 )
 
 const (
-	historyMax     = 100
-	haikusTimeout  = 30 * time.Second
-	maxInputLen = 1000
+	historyMax    = 100
+	haikusTimeout = 30 * time.Second
+	maxInputLen   = 1000
+	armDelay      = 500 * time.Millisecond
 )
 
 type HookInput struct {
@@ -97,32 +98,23 @@ func main() {
 		waitForSIGTERM()
 	}
 
-	// --- Tools that always require manual approval ---
-	if alwaysDialogTools[input.ToolName] {
-		showDialog(input.ToolName, toolInput, "manual_required")
-	}
-
 	// --- Auto-approve gcloud read-only commands ---
 	if input.ToolName == "Bash" {
 		var bash BashToolInput
 		if err := json.Unmarshal(input.ToolInput, &bash); err == nil {
 			if gcloudReadRe.MatchString(bash.Command) {
-				approve(input.ToolName, "gcloud_read")
+				approveImmediate(input.ToolName, "gcloud_read")
 			}
 		}
 	}
 
-	// --- Risk evaluation via Claude Haiku ---
-	riskLevel := evaluateRisk(input.ToolName, toolInput)
-
-	switch riskLevel {
-	case "very_low", "low":
-		approve(input.ToolName, riskLevel)
-	case "medium", "high", "very_high":
-		showDialog(input.ToolName, toolInput, riskLevel)
-	default:
-		showDialog(input.ToolName, toolInput, "unknown")
+	// --- Tools that always require manual approval (skip Haiku) ---
+	if alwaysDialogTools[input.ToolName] {
+		showDialog(input.ToolName, toolInput, "manual_required", false)
 	}
+
+	// --- Show dialog immediately, evaluate risk in background ---
+	showDialog(input.ToolName, toolInput, "", true)
 }
 
 // --- Helper functions ---
@@ -147,7 +139,7 @@ func outputJSON(behavior string) {
 	fmt.Printf(`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"%s"}}}`, behavior)
 }
 
-func approve(toolName, riskLevel string) {
+func approveImmediate(toolName, riskLevel string) {
 	exec.Command("osascript", "-e",
 		fmt.Sprintf(`display notification "Auto-approved (%s): %s" with title "Claude Code"`, riskLevel, toolName),
 	).Start()
@@ -215,15 +207,42 @@ func riskColor(level string) color.Color {
 	}
 }
 
-func showDialog(toolName, toolInput, riskLevel string) {
+func formatToolInput(raw string) string {
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		return raw
+	}
+
+	var lines []string
+	for key, val := range obj {
+		switch v := val.(type) {
+		case string:
+			lines = append(lines, fmt.Sprintf("%s: %s", key, v))
+		default:
+			b, _ := json.Marshal(v)
+			lines = append(lines, fmt.Sprintf("%s: %s", key, string(b)))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func riskDisplayText(level string) string {
+	if level == "" {
+		return "EVALUATING..."
+	}
+	return strings.ToUpper(strings.ReplaceAll(level, "_", " "))
+}
+
+func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	a := app.New()
 	w := a.NewWindow("Claude Code Permission Request")
 
+	currentRiskLevel := initialRiskLevel
+
 	// Risk level bar (full-width colored banner)
-	riskDisplayText := strings.ToUpper(strings.ReplaceAll(riskLevel, "_", " "))
-	barBg := canvas.NewRectangle(riskColor(riskLevel))
+	barBg := canvas.NewRectangle(riskColor(currentRiskLevel))
 	barBg.SetMinSize(fyne.NewSize(0, 44))
-	barText := canvas.NewText(riskDisplayText, color.White)
+	barText := canvas.NewText(riskDisplayText(currentRiskLevel), color.White)
 	barText.TextStyle = fyne.TextStyle{Bold: true}
 	barText.TextSize = 18
 	barText.Alignment = fyne.TextAlignCenter
@@ -233,8 +252,8 @@ func showDialog(toolName, toolInput, riskLevel string) {
 	toolLabel := widget.NewRichTextFromMarkdown("**Tool:** " + toolName)
 	cwdLabel := widget.NewRichTextFromMarkdown("**CWD:** " + cwd)
 
-	// Tool input (scrollable)
-	inputLabel := widget.NewLabel(toolInput)
+	// Tool input (scrollable, pretty-printed)
+	inputLabel := widget.NewLabel(formatToolInput(toolInput))
 	inputLabel.Wrapping = fyne.TextWrapBreak
 	inputScroll := container.NewVScroll(inputLabel)
 	inputScroll.SetMinSize(fyne.NewSize(0, 120))
@@ -283,9 +302,9 @@ func showDialog(toolName, toolInput, riskLevel string) {
 		}
 	})
 
-	// Arm buttons after 500ms to prevent accidental input
+	// Arm buttons after delay
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(armDelay)
 		fyne.Do(func() {
 			armed = true
 			approveBtn.Enable()
@@ -293,35 +312,54 @@ func showDialog(toolName, toolInput, riskLevel string) {
 		})
 	}()
 
-	// Layout: risk bar full-width at top, padded content below
+	// Evaluate risk in background
+	if evaluate {
+		go func() {
+			riskLevel := evaluateRisk(toolName, toolInput)
+			fyne.Do(func() {
+				currentRiskLevel = riskLevel
+				barBg.FillColor = riskColor(riskLevel)
+				barText.Text = riskDisplayText(riskLevel)
+				barBg.Refresh()
+				barText.Refresh()
+
+				if riskLevel == "very_low" || riskLevel == "low" {
+					result = "approved"
+					a.Quit()
+				}
+			})
+		}()
+	}
+
+	// Layout
 	w.SetContent(container.NewBorder(
-		// Top: risk bar + tool label
 		container.NewVBox(
 			riskBar,
 			container.NewPadded(container.NewVBox(toolLabel, cwdLabel)),
 		),
-		// Bottom: hint + buttons
 		container.NewPadded(container.NewVBox(
 			widget.NewSeparator(),
 			hint,
 			buttons,
 		)),
 		nil, nil,
-		// Center: scrollable tool input (fills remaining space)
 		container.NewPadded(inputScroll),
 	))
 
 	w.Resize(fyne.NewSize(520, 400))
-	w.CenterOnScreen()
 	w.SetFixedSize(true)
-	w.ShowAndRun()
+
+	// Show window, position at bottom-right, then run event loop
+	w.Show()
+	moveToBottomRight()
+	a.Run()
 
 	// Process result after dialog closes
 	if result == "approved" {
-		recordDecision(toolName, toolInput, "approve", riskLevel)
+		recordDecision(toolName, toolInput, "approve", currentRiskLevel)
 		outputJSON("allow")
 	} else {
-		recordDecision(toolName, toolInput, "deny", riskLevel)
+		recordDecision(toolName, toolInput, "deny", currentRiskLevel)
 		outputJSON("deny")
 	}
 	os.Exit(0)
@@ -392,7 +430,7 @@ Risk criteria:
 	cmd.Stdout = &out
 
 	if err := cmd.Start(); err != nil {
-		showDialog(toolName, toolInput, "error")
+		return "error"
 	}
 
 	done := make(chan error, 1)
@@ -401,16 +439,16 @@ Risk criteria:
 	select {
 	case err := <-done:
 		if err != nil {
-			showDialog(toolName, toolInput, "error")
+			return "error"
 		}
 	case <-time.After(haikusTimeout):
 		cmd.Process.Kill()
-		showDialog(toolName, toolInput, "timeout")
+		return "timeout"
 	}
 
 	var resp HaikuResponse
 	if err := json.Unmarshal(out.Bytes(), &resp); err != nil || resp.StructuredOutput.RiskLevel == "" {
-		showDialog(toolName, toolInput, "parse_error")
+		return "parse_error"
 	}
 
 	return resp.StructuredOutput.RiskLevel
