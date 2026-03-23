@@ -302,6 +302,14 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 		}
 	})
 
+	// Close dialog on SIGTERM/SIGINT
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+		<-sig
+		a.Quit()
+	}()
+
 	// Arm buttons after delay
 	go func() {
 		time.Sleep(armDelay)
