@@ -20,6 +20,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
@@ -259,7 +260,7 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	inputScroll.SetMinSize(fyne.NewSize(0, 120))
 
 	// Keyboard hint
-	hint := canvas.NewText("Enter: Approve  /  Escape: Deny", color.NRGBA{R: 140, G: 140, B: 140, A: 255})
+	hint := canvas.NewText("Cmd+Shift+Enter: Approve  /  Escape: Deny", color.NRGBA{R: 140, G: 140, B: 140, A: 255})
 	hint.TextSize = 12
 
 	// Buttons (initially disabled to prevent accidental input)
@@ -288,15 +289,23 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	buttons := container.NewHBox(layout.NewSpacer(), denyBtn, approveBtn)
 
 	// Keyboard shortcuts (ignored until armed)
+	// Cmd+Shift+Enter to approve
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyReturn,
+		Modifier: fyne.KeyModifierSuper | fyne.KeyModifierShift,
+	}, func(_ fyne.Shortcut) {
+		if !armed {
+			return
+		}
+		result = "approved"
+		a.Quit()
+	})
+	// Escape to deny
 	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
 		if !armed {
 			return
 		}
-		switch e.Name {
-		case fyne.KeyReturn:
-			result = "approved"
-			a.Quit()
-		case fyne.KeyEscape:
+		if e.Name == fyne.KeyEscape {
 			result = "denied"
 			a.Quit()
 		}
