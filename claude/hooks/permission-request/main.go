@@ -344,6 +344,7 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	toolText.TextStyle = monoStyle
 	cwdText := widget.NewLabel("CWD:  " + cwd)
 	cwdText.TextStyle = monoStyle
+	cwdText.Wrapping = fyne.TextWrapBreak
 
 	// Tool input (scrollable, monospace)
 	var inputWidget fyne.CanvasObject
