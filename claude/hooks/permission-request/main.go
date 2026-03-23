@@ -227,6 +227,61 @@ func formatToolInput(raw string) string {
 	return strings.Join(lines, "\n")
 }
 
+type EditToolInput struct {
+	FilePath   string `json:"file_path"`
+	OldString  string `json:"old_string"`
+	NewString  string `json:"new_string"`
+	ReplaceAll bool   `json:"replace_all"`
+}
+
+func formatEditDiff(raw string) fyne.CanvasObject {
+	var edit EditToolInput
+	if err := json.Unmarshal([]byte(raw), &edit); err != nil {
+		label := widget.NewLabel(raw)
+		label.Wrapping = fyne.TextWrapBreak
+		return label
+	}
+
+	monoStyle := fyne.TextStyle{Monospace: true}
+	red := color.NRGBA{R: 200, G: 50, B: 50, A: 255}
+	green := color.NRGBA{R: 50, G: 160, B: 50, A: 255}
+	gray := color.NRGBA{R: 140, G: 140, B: 140, A: 255}
+
+	var objects []fyne.CanvasObject
+
+	// File path header
+	filePath := canvas.NewText(edit.FilePath, gray)
+	filePath.TextStyle = monoStyle
+	filePath.TextSize = 13
+	objects = append(objects, filePath)
+
+	if edit.ReplaceAll {
+		replaceAll := canvas.NewText("(replace all)", gray)
+		replaceAll.TextSize = 12
+		objects = append(objects, replaceAll)
+	}
+
+	objects = append(objects, widget.NewSeparator())
+
+	// Old string lines (red, prefixed with -)
+	for _, line := range strings.Split(edit.OldString, "\n") {
+		t := canvas.NewText("- "+line, red)
+		t.TextStyle = monoStyle
+		t.TextSize = 13
+		objects = append(objects, t)
+	}
+
+	// New string lines (green, prefixed with +)
+	for _, line := range strings.Split(edit.NewString, "\n") {
+		t := canvas.NewText("+ "+line, green)
+		t.TextStyle = monoStyle
+		t.TextSize = 13
+		objects = append(objects, t)
+	}
+
+	return container.NewVBox(objects...)
+}
+
 func riskDisplayText(level string) string {
 	if level == "" {
 		return "EVALUATING..."
@@ -253,10 +308,16 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	toolLabel := widget.NewRichTextFromMarkdown("**Tool:** " + toolName)
 	cwdLabel := widget.NewRichTextFromMarkdown("**CWD:** " + cwd)
 
-	// Tool input (scrollable, pretty-printed)
-	inputLabel := widget.NewLabel(formatToolInput(toolInput))
-	inputLabel.Wrapping = fyne.TextWrapBreak
-	inputScroll := container.NewVScroll(inputLabel)
+	// Tool input (scrollable)
+	var inputWidget fyne.CanvasObject
+	if toolName == "Edit" {
+		inputWidget = formatEditDiff(toolInput)
+	} else {
+		label := widget.NewLabel(formatToolInput(toolInput))
+		label.Wrapping = fyne.TextWrapBreak
+		inputWidget = label
+	}
+	inputScroll := container.NewVScroll(inputWidget)
 	inputScroll.SetMinSize(fyne.NewSize(0, 120))
 
 	// Keyboard hint
