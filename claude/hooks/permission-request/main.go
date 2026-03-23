@@ -340,12 +340,10 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 
 	// Tool name and cwd (monospace)
 	monoStyle := fyne.TextStyle{Monospace: true}
-	toolText := canvas.NewText("Tool: "+toolName, color.White)
+	toolText := widget.NewLabel("Tool: " + toolName)
 	toolText.TextStyle = monoStyle
-	toolText.TextSize = 13
-	cwdText := canvas.NewText("CWD:  "+cwd, color.White)
+	cwdText := widget.NewLabel("CWD:  " + cwd)
 	cwdText.TextStyle = monoStyle
-	cwdText.TextSize = 13
 
 	// Tool input (scrollable, monospace)
 	var inputWidget fyne.CanvasObject
