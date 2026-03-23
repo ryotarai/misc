@@ -33,6 +33,7 @@ const (
 type HookInput struct {
 	ToolName  string          `json:"tool_name"`
 	ToolInput json.RawMessage `json:"tool_input"`
+	Cwd       string          `json:"cwd"`
 }
 
 type BashToolInput struct {
@@ -54,6 +55,7 @@ type HistoryEntry struct {
 }
 
 var (
+	cwd                 string
 	historyFile         string
 	debugLogFile        string
 	gcloudReadRe        = regexp.MustCompile(`^gcloud\s+.*\s+(list|describe|get)(\s|$)`)
@@ -85,6 +87,8 @@ func main() {
 	if len(toolInput) > maxInputLen {
 		toolInput = toolInput[:maxInputLen]
 	}
+
+	cwd = input.Cwd
 
 	debugLog(input.ToolName, string(rawInput))
 
@@ -225,8 +229,9 @@ func showDialog(toolName, toolInput, riskLevel string) {
 	barText.Alignment = fyne.TextAlignCenter
 	riskBar := container.NewStack(barBg, container.NewCenter(barText))
 
-	// Tool name
+	// Tool name and cwd
 	toolLabel := widget.NewRichTextFromMarkdown("**Tool:** " + toolName)
+	cwdLabel := widget.NewRichTextFromMarkdown("**CWD:** " + cwd)
 
 	// Tool input (scrollable)
 	inputLabel := widget.NewLabel(toolInput)
@@ -293,7 +298,7 @@ func showDialog(toolName, toolInput, riskLevel string) {
 		// Top: risk bar + tool label
 		container.NewVBox(
 			riskBar,
-			container.NewPadded(toolLabel),
+			container.NewPadded(container.NewVBox(toolLabel, cwdLabel)),
 		),
 		// Bottom: hint + buttons
 		container.NewPadded(container.NewVBox(
