@@ -338,17 +338,23 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	barText.Alignment = fyne.TextAlignCenter
 	riskBar := container.NewStack(barBg, container.NewCenter(barText))
 
-	// Tool name and cwd
-	toolLabel := widget.NewRichTextFromMarkdown("**Tool:** " + toolName)
-	cwdLabel := widget.NewRichTextFromMarkdown("**CWD:** " + cwd)
+	// Tool name and cwd (monospace)
+	monoStyle := fyne.TextStyle{Monospace: true}
+	toolText := canvas.NewText("Tool: "+toolName, color.White)
+	toolText.TextStyle = monoStyle
+	toolText.TextSize = 13
+	cwdText := canvas.NewText("CWD:  "+cwd, color.White)
+	cwdText.TextStyle = monoStyle
+	cwdText.TextSize = 13
 
-	// Tool input (scrollable)
+	// Tool input (scrollable, monospace)
 	var inputWidget fyne.CanvasObject
 	if toolName == "Edit" {
 		inputWidget = formatEditDiff(toolInput)
 	} else {
 		label := widget.NewLabel(formatToolInput(toolInput))
 		label.Wrapping = fyne.TextWrapBreak
+		label.TextStyle = monoStyle
 		inputWidget = label
 	}
 	inputScroll := container.NewVScroll(inputWidget)
@@ -447,7 +453,7 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	w.SetContent(container.NewBorder(
 		container.NewVBox(
 			riskBar,
-			container.NewPadded(container.NewVBox(toolLabel, cwdLabel)),
+			container.NewPadded(container.NewVBox(toolText, cwdText)),
 		),
 		container.NewPadded(container.NewVBox(
 			widget.NewSeparator(),
