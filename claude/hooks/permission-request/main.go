@@ -31,6 +31,7 @@ const (
 	haikusTimeout = 30 * time.Second
 	maxInputLen   = 1000
 	armDelay      = 500 * time.Millisecond
+	dialogDelay   = 1 * time.Second
 )
 
 type HookInput struct {
@@ -162,13 +163,27 @@ func main() {
 		}
 	}
 
-	// --- Tools that always require manual approval (skip Haiku) ---
+	// --- Tools that always require manual approval (skip risk eval) ---
 	if alwaysDialogTools[input.ToolName] {
-		showDialog(input.ToolName, toolInput, "manual_required", false)
+		showDialog(input.ToolName, toolInput, "manual_required", "", nil)
 	}
 
-	// --- Show dialog immediately, evaluate risk in background ---
-	showDialog(input.ToolName, toolInput, "", true)
+	// --- Evaluate risk, then show dialog if needed ---
+	evalCh := make(chan riskEvalResult, 1)
+	go func() {
+		evalCh <- evaluateRisk(input.ToolName, toolInput)
+	}()
+
+	// Wait up to dialogDelay for risk result; auto-approve if low risk
+	select {
+	case r := <-evalCh:
+		if r.riskLevel == "very_low" || r.riskLevel == "low" {
+			approveImmediate(input.ToolName, r.riskLevel)
+		}
+		showDialog(input.ToolName, toolInput, r.riskLevel, r.modelName, nil)
+	case <-time.After(dialogDelay):
+		showDialog(input.ToolName, toolInput, "", riskEvalModelName(), evalCh)
+	}
 }
 
 // --- Helper functions ---
@@ -376,7 +391,7 @@ func riskDisplayText(level string) string {
 	return strings.ToUpper(strings.ReplaceAll(level, "_", " "))
 }
 
-func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
+func showDialog(toolName, toolInput, initialRiskLevel, modelName string, evalCh <-chan riskEvalResult) {
 	a := app.New()
 	w := a.NewWindow("Claude Code Permission Request")
 
@@ -416,15 +431,11 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	hint := canvas.NewText("Cmd+Shift+Enter: Approve  /  Escape: Deny", color.NRGBA{R: 140, G: 140, B: 140, A: 255})
 	hint.TextSize = 12
 
-	// Model name label (shown from the start if evaluating)
-	evalModelName := ""
-	if evaluate {
-		evalModelName = riskEvalModelName()
-	}
+	// Model name label
 	modelText := canvas.NewText("", color.NRGBA{R: 120, G: 120, B: 120, A: 255})
 	modelText.TextSize = 11
-	if evalModelName != "" {
-		modelText.Text = "eval: " + evalModelName
+	if modelName != "" {
+		modelText.Text = "eval: " + modelName
 	}
 
 	// Buttons (initially disabled to prevent accidental input)
@@ -493,10 +504,10 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 		})
 	}()
 
-	// Evaluate risk in background
-	if evaluate {
+	// Wait for deferred risk evaluation result
+	if evalCh != nil {
 		go func() {
-			evalResult := evaluateRisk(toolName, toolInput)
+			evalResult := <-evalCh
 			fyne.Do(func() {
 				currentRiskLevel = evalResult.riskLevel
 				barBg.FillColor = riskColor(evalResult.riskLevel)
