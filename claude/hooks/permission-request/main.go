@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -48,6 +49,46 @@ type HaikuResponse struct {
 	} `json:"structured_output"`
 }
 
+// OpenAI-compatible API types
+type chatRequest struct {
+	Model          string          `json:"model"`
+	Messages       []chatMessage   `json:"messages"`
+	ResponseFormat *responseFormat  `json:"response_format,omitempty"`
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type responseFormat struct {
+	Type       string      `json:"type"`
+	JSONSchema *jsonSchema `json:"json_schema,omitempty"`
+}
+
+type jsonSchema struct {
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
+}
+
+type chatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+type riskResult struct {
+	RiskLevel string `json:"risk_level"`
+}
+
+type Config struct {
+	APIBase string `json:"api_base"`
+	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`
+}
+
 type HistoryEntry struct {
 	Timestamp string `json:"timestamp"`
 	ToolName  string `json:"tool_name"`
@@ -60,10 +101,21 @@ var (
 	cwd                 string
 	historyFile         string
 	debugLogFile        string
+	config              Config
 	gcloudReadRe        = regexp.MustCompile(`^gcloud\s+.*\s+(list|describe|get)(\s|$)`)
 	alwaysDialogTools   = map[string]bool{"ExitPlanMode": true}
 	waitForSIGTERMTools = map[string]bool{"AskUserQuestion": true}
 )
+
+func loadConfig(path string) Config {
+	var cfg Config
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cfg
+	}
+	json.Unmarshal(data, &cfg)
+	return cfg
+}
 
 func init() {
 	home, err := os.UserHomeDir()
@@ -72,6 +124,7 @@ func init() {
 	}
 	historyFile = filepath.Join(home, ".claude", "permission-history.jsonl")
 	debugLogFile = filepath.Join(home, ".claude", "permission-debug.log")
+	config = loadConfig(filepath.Join(home, ".config", "ryotarai-permission-request", "config.json"))
 }
 
 func main() {
@@ -363,6 +416,17 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	hint := canvas.NewText("Cmd+Shift+Enter: Approve  /  Escape: Deny", color.NRGBA{R: 140, G: 140, B: 140, A: 255})
 	hint.TextSize = 12
 
+	// Model name label (shown from the start if evaluating)
+	evalModelName := ""
+	if evaluate {
+		evalModelName = riskEvalModelName()
+	}
+	modelText := canvas.NewText("", color.NRGBA{R: 120, G: 120, B: 120, A: 255})
+	modelText.TextSize = 11
+	if evalModelName != "" {
+		modelText.Text = "eval: " + evalModelName
+	}
+
 	// Buttons (initially disabled to prevent accidental input)
 	result := "denied"
 	armed := false
@@ -432,15 +496,15 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 	// Evaluate risk in background
 	if evaluate {
 		go func() {
-			riskLevel := evaluateRisk(toolName, toolInput)
+			evalResult := evaluateRisk(toolName, toolInput)
 			fyne.Do(func() {
-				currentRiskLevel = riskLevel
-				barBg.FillColor = riskColor(riskLevel)
-				barText.Text = riskDisplayText(riskLevel)
+				currentRiskLevel = evalResult.riskLevel
+				barBg.FillColor = riskColor(evalResult.riskLevel)
+				barText.Text = riskDisplayText(evalResult.riskLevel)
 				barBg.Refresh()
 				barText.Refresh()
 
-				if riskLevel == "very_low" || riskLevel == "low" {
+				if evalResult.riskLevel == "very_low" || evalResult.riskLevel == "low" {
 					result = "approved"
 					a.Quit()
 				}
@@ -456,7 +520,7 @@ func showDialog(toolName, toolInput, initialRiskLevel string, evaluate bool) {
 		),
 		container.NewPadded(container.NewVBox(
 			widget.NewSeparator(),
-			hint,
+			container.NewHBox(hint, layout.NewSpacer(), modelText),
 			buttons,
 		)),
 		nil, nil,
@@ -513,8 +577,7 @@ func buildHistoryContext() string {
 	return strings.Join(parts, "\n")
 }
 
-func evaluateRisk(toolName, toolInput string) string {
-	systemPrompt := `You are a security risk classifier. Classify the risk level of the given tool call. Do NOT use any tools. Respond immediately with the structured output only.
+var riskSystemPrompt = `You are a security risk classifier. Classify the risk level of the given tool call. Do NOT use any tools. Respond immediately with the structured output only.
 
 Risk criteria:
 - very_low: Read-only, no side effects (ls, cat, git status, git diff, git log, grep, Read, Glob, Grep, LS tools)
@@ -523,21 +586,146 @@ Risk criteria:
 - high: Destructive or hard to reverse (rm -rf, git reset --hard, git push --force, DROP TABLE, connections to untrusted internet endpoints)
 - very_high: Extremely dangerous (rm -rf /, curl|bash from untrusted URL, sudo on system files)`
 
-	userPrompt := fmt.Sprintf("Tool name: %s\nTool input: %s", toolName, toolInput)
+var riskJSONSchema = json.RawMessage(`{"type":"object","properties":{"risk_level":{"type":"string","enum":["very_low","low","medium","high","very_high"]}},"required":["risk_level"]}`)
 
+func buildUserPrompt(toolName, toolInput string) string {
+	userPrompt := fmt.Sprintf("Tool name: %s\nTool input: %s", toolName, toolInput)
 	historyCtx := buildHistoryContext()
 	if historyCtx != "" {
 		userPrompt += "\n\nRecent manual decisions by the user (approve/deny) for reference:\n" + historyCtx
 	}
+	return userPrompt
+}
 
-	jsonSchema := `{"type":"object","properties":{"risk_level":{"type":"string","enum":["very_low","low","medium","high","very_high"]}},"required":["risk_level"]}`
+func getConfigValue(envKey, configValue, defaultValue string) string {
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	if configValue != "" {
+		return configValue
+	}
+	return defaultValue
+}
+
+type riskEvalResult struct {
+	riskLevel string
+	modelName string
+}
+
+func riskEvalModelName() string {
+	apiKey := getConfigValue("RISK_EVAL_API_KEY", config.APIKey, "")
+	if apiKey == "" {
+		apiKey = os.Getenv("GEMINI_API_KEY")
+	}
+	if apiKey == "" {
+		return "Claude Code"
+	}
+	return getConfigValue("RISK_EVAL_MODEL", config.Model, "gemini-2.0-flash")
+}
+
+func evaluateRisk(toolName, toolInput string) riskEvalResult {
+	apiKey := getConfigValue("RISK_EVAL_API_KEY", config.APIKey, "")
+	if apiKey == "" {
+		apiKey = os.Getenv("GEMINI_API_KEY")
+	}
+	if apiKey == "" {
+		return evaluateRiskCLI(toolName, toolInput)
+	}
+	return evaluateRiskAPI(toolName, toolInput, apiKey)
+}
+
+func evaluateRiskAPI(toolName, toolInput, apiKey string) riskEvalResult {
+	apiBase := getConfigValue("RISK_EVAL_API_BASE", config.APIBase, "https://generativelanguage.googleapis.com/v1beta/openai")
+	model := getConfigValue("RISK_EVAL_MODEL", config.Model, "gemini-2.0-flash")
+	endpoint := apiBase + "/chat/completions"
+	errResult := riskEvalResult{riskLevel: "error", modelName: model}
+
+	debugLog("evaluateRiskAPI", fmt.Sprintf("endpoint=%s model=%s", endpoint, model))
+
+	reqBody := chatRequest{
+		Model: model,
+		Messages: []chatMessage{
+			{Role: "system", Content: riskSystemPrompt},
+			{Role: "user", Content: buildUserPrompt(toolName, toolInput)},
+		},
+		ResponseFormat: &responseFormat{
+			Type: "json_schema",
+			JSONSchema: &jsonSchema{
+				Name:   "risk",
+				Schema: riskJSONSchema,
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("marshal error: %v", err))
+		return errResult
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("new request error: %v", err))
+		return errResult
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: haikusTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("http error: %v", err))
+		return errResult
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("read body error: %v", err))
+		return errResult
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("status=%d body=%s", resp.StatusCode, string(respBody)))
+		return errResult
+	}
+
+	var chatResp chatResponse
+	if err := json.Unmarshal(respBody, &chatResp); err != nil {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("unmarshal response error: %v body=%s", err, string(respBody)))
+		errResult.riskLevel = "parse_error"
+		return errResult
+	}
+
+	if len(chatResp.Choices) == 0 {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("no choices in response: %s", string(respBody)))
+		errResult.riskLevel = "parse_error"
+		return errResult
+	}
+
+	content := chatResp.Choices[0].Message.Content
+	var result riskResult
+	if err := json.Unmarshal([]byte(content), &result); err != nil || result.RiskLevel == "" {
+		debugLog("evaluateRiskAPI", fmt.Sprintf("unmarshal content error: %v content=%s", err, content))
+		errResult.riskLevel = "parse_error"
+		return errResult
+	}
+
+	debugLog("evaluateRiskAPI", fmt.Sprintf("result=%s", result.RiskLevel))
+	return riskEvalResult{riskLevel: result.RiskLevel, modelName: model}
+}
+
+func evaluateRiskCLI(toolName, toolInput string) riskEvalResult {
+	cliModel := "claude-haiku-4-5-20251001"
+	errResult := riskEvalResult{riskLevel: "error", modelName: "Claude Code"}
+	userPrompt := buildUserPrompt(toolName, toolInput)
 
 	cmd := exec.Command("claude",
-		"--model", "claude-haiku-4-5-20251001",
+		"--model", cliModel,
 		"-p", userPrompt,
-		"--system-prompt", systemPrompt,
+		"--system-prompt", riskSystemPrompt,
 		"--output-format", "json",
-		"--json-schema", jsonSchema,
+		"--json-schema", string(riskJSONSchema),
 		"--no-session-persistence",
 	)
 	cmd.Stdin = nil
@@ -547,7 +735,7 @@ Risk criteria:
 	cmd.Stdout = &out
 
 	if err := cmd.Start(); err != nil {
-		return "error"
+		return errResult
 	}
 
 	done := make(chan error, 1)
@@ -556,17 +744,19 @@ Risk criteria:
 	select {
 	case err := <-done:
 		if err != nil {
-			return "error"
+			return errResult
 		}
 	case <-time.After(haikusTimeout):
 		cmd.Process.Kill()
-		return "timeout"
+		errResult.riskLevel = "timeout"
+		return errResult
 	}
 
 	var resp HaikuResponse
 	if err := json.Unmarshal(out.Bytes(), &resp); err != nil || resp.StructuredOutput.RiskLevel == "" {
-		return "parse_error"
+		errResult.riskLevel = "parse_error"
+		return errResult
 	}
 
-	return resp.StructuredOutput.RiskLevel
+	return riskEvalResult{riskLevel: resp.StructuredOutput.RiskLevel, modelName: "Claude Code"}
 }
