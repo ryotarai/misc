@@ -31,7 +31,7 @@ const (
 	haikusTimeout = 30 * time.Second
 	maxInputLen   = 1000
 	armDelay      = 500 * time.Millisecond
-	dialogDelay   = 2 * time.Second
+	dialogDelay   = 5 * time.Second
 )
 
 type HookInput struct {
