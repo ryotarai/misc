@@ -5,7 +5,7 @@ package main
 #cgo LDFLAGS: -framework Cocoa
 #import <Cocoa/Cocoa.h>
 
-void moveWindowToBottomRight() {
+static void _moveWindowToBottomRight() {
 	NSScreen *screen = [NSScreen mainScreen];
 	NSRect screenFrame = [screen visibleFrame];
 	NSArray *windows = [NSApp windows];
@@ -25,5 +25,5 @@ void moveWindowToBottomRight() {
 import "C"
 
 func moveToBottomRight() {
-	C.moveWindowToBottomRight()
+	C._moveWindowToBottomRight()
 }

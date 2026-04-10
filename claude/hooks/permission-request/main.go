@@ -94,6 +94,7 @@ type HistoryEntry struct {
 	Timestamp string `json:"timestamp"`
 	ToolName  string `json:"tool_name"`
 	ToolInput string `json:"tool_input"`
+	Cwd       string `json:"cwd,omitempty"`
 	Decision  string `json:"decision"`
 	RiskLevel string `json:"risk_level"`
 }
@@ -104,8 +105,7 @@ var (
 	debugLogFile        string
 	config              Config
 	gcloudReadRe        = regexp.MustCompile(`^gcloud\s+.*\s+(list|describe|get)(\s|$)`)
-	alwaysDialogTools   = map[string]bool{"ExitPlanMode": true}
-	waitForSIGTERMTools = map[string]bool{"AskUserQuestion": true}
+	waitForSIGTERMTools = map[string]bool{"AskUserQuestion": true, "ExitPlanMode": true}
 )
 
 func loadConfig(path string) Config {
@@ -125,6 +125,7 @@ func init() {
 	}
 	historyFile = filepath.Join(home, ".claude", "permission-history.jsonl")
 	debugLogFile = filepath.Join(home, ".claude", "permission-debug.log")
+	riskEvalCustomRulesFile = filepath.Join(home, ".claude", "risk-eval.md")
 	config = loadConfig(filepath.Join(home, ".config", "ryotarai-permission-request", "config.json"))
 }
 
@@ -163,26 +164,29 @@ func main() {
 		}
 	}
 
-	// --- Tools that always require manual approval (skip risk eval) ---
-	if alwaysDialogTools[input.ToolName] {
-		showDialog(input.ToolName, toolInput, "manual_required", "", nil)
-	}
-
 	// --- Evaluate risk, then show dialog if needed ---
 	evalCh := make(chan riskEvalResult, 1)
 	go func() {
 		evalCh <- evaluateRisk(input.ToolName, toolInput)
 	}()
 
+	// Handle SIGTERM during the wait
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
 	// Wait up to dialogDelay for risk result; auto-approve if low risk
 	select {
 	case r := <-evalCh:
+		signal.Stop(sigCh)
 		if r.riskLevel == "very_low" || r.riskLevel == "low" {
 			approveImmediate(input.ToolName, r.riskLevel)
 		}
 		showDialog(input.ToolName, toolInput, r.riskLevel, r.modelName, nil)
 	case <-time.After(dialogDelay):
+		signal.Stop(sigCh)
 		showDialog(input.ToolName, toolInput, "", riskEvalModelName(), evalCh)
+	case <-sigCh:
+		os.Exit(0)
 	}
 }
 
@@ -226,6 +230,7 @@ func recordDecision(toolName, toolInput, decision, riskLevel string) {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		ToolName:  toolName,
 		ToolInput: truncatedInput,
+		Cwd:       cwd,
 		Decision:  decision,
 		RiskLevel: riskLevel,
 	}
@@ -428,7 +433,7 @@ func showDialog(toolName, toolInput, initialRiskLevel, modelName string, evalCh 
 	inputScroll.SetMinSize(fyne.NewSize(0, 120))
 
 	// Keyboard hint
-	hint := canvas.NewText("Cmd+Shift+Enter: Approve  /  Escape: Deny", color.NRGBA{R: 140, G: 140, B: 140, A: 255})
+	hint := canvas.NewText("Cmd+Shift+A: Approve  /  Cmd+Shift+X: Deny", color.NRGBA{R: 140, G: 140, B: 140, A: 255})
 	hint.TextSize = 12
 
 	// Model name label
@@ -464,9 +469,9 @@ func showDialog(toolName, toolInput, initialRiskLevel, modelName string, evalCh 
 	buttons := container.NewHBox(layout.NewSpacer(), denyBtn, approveBtn)
 
 	// Keyboard shortcuts (ignored until armed)
-	// Cmd+Shift+Enter to approve
+	// Cmd+Shift+A to approve
 	w.Canvas().AddShortcut(&desktop.CustomShortcut{
-		KeyName:  fyne.KeyReturn,
+		KeyName:  fyne.KeyA,
 		Modifier: fyne.KeyModifierSuper | fyne.KeyModifierShift,
 	}, func(_ fyne.Shortcut) {
 		if !armed {
@@ -475,15 +480,16 @@ func showDialog(toolName, toolInput, initialRiskLevel, modelName string, evalCh 
 		result = "approved"
 		a.Quit()
 	})
-	// Escape to deny
-	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
+	// Cmd+Shift+X to deny
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyX,
+		Modifier: fyne.KeyModifierSuper | fyne.KeyModifierShift,
+	}, func(_ fyne.Shortcut) {
 		if !armed {
 			return
 		}
-		if e.Name == fyne.KeyEscape {
-			result = "denied"
-			a.Quit()
-		}
+		result = "denied"
+		a.Quit()
 	})
 
 	// Close dialog on SIGTERM/SIGINT
@@ -583,12 +589,16 @@ func buildHistoryContext() string {
 		if len(input) > 100 {
 			input = input[:100]
 		}
-		parts = append(parts, fmt.Sprintf("- %s: %s %s", entry.Decision, entry.ToolName, input))
+		cwdInfo := ""
+		if entry.Cwd != "" {
+			cwdInfo = " (cwd: " + entry.Cwd + ")"
+		}
+		parts = append(parts, fmt.Sprintf("- %s: %s %s%s", entry.Decision, entry.ToolName, input, cwdInfo))
 	}
 	return strings.Join(parts, "\n")
 }
 
-var riskSystemPrompt = `You are a security risk classifier. Classify the risk level of the given tool call. Do NOT use any tools. Respond immediately with the structured output only.
+var riskSystemPromptBase = `You are a security risk classifier. Classify the risk level of the given tool call. Do NOT use any tools. Respond immediately with the structured output only.
 
 Risk criteria:
 - very_low: Read-only, no side effects (ls, cat, git status, git diff, git log, grep, Read, Glob, Grep, LS tools)
@@ -597,10 +607,25 @@ Risk criteria:
 - high: Destructive or hard to reverse (rm -rf, git reset --hard, git push --force, DROP TABLE, connections to untrusted internet endpoints)
 - very_high: Extremely dangerous (rm -rf /, curl|bash from untrusted URL, sudo on system files)`
 
+var riskEvalCustomRulesFile string
+
+func buildRiskSystemPrompt() string {
+	prompt := riskSystemPromptBase
+	data, err := os.ReadFile(riskEvalCustomRulesFile)
+	if err != nil {
+		return prompt
+	}
+	rules := strings.TrimSpace(string(data))
+	if rules != "" {
+		prompt += "\n\nThe following user-defined rules take the HIGHEST priority and MUST override any criteria above:\n" + rules
+	}
+	return prompt
+}
+
 var riskJSONSchema = json.RawMessage(`{"type":"object","properties":{"risk_level":{"type":"string","enum":["very_low","low","medium","high","very_high"]}},"required":["risk_level"]}`)
 
 func buildUserPrompt(toolName, toolInput string) string {
-	userPrompt := fmt.Sprintf("Tool name: %s\nTool input: %s", toolName, toolInput)
+	userPrompt := fmt.Sprintf("Tool name: %s\nCWD: %s\nTool input: %s", toolName, cwd, toolInput)
 	historyCtx := buildHistoryContext()
 	if historyCtx != "" {
 		userPrompt += "\n\nRecent manual decisions by the user (approve/deny) for reference:\n" + historyCtx
@@ -656,7 +681,7 @@ func evaluateRiskAPI(toolName, toolInput, apiKey string) riskEvalResult {
 	reqBody := chatRequest{
 		Model: model,
 		Messages: []chatMessage{
-			{Role: "system", Content: riskSystemPrompt},
+			{Role: "system", Content: buildRiskSystemPrompt()},
 			{Role: "user", Content: buildUserPrompt(toolName, toolInput)},
 		},
 		ResponseFormat: &responseFormat{
@@ -734,7 +759,7 @@ func evaluateRiskCLI(toolName, toolInput string) riskEvalResult {
 	cmd := exec.Command("claude",
 		"--model", cliModel,
 		"-p", userPrompt,
-		"--system-prompt", riskSystemPrompt,
+		"--system-prompt", buildRiskSystemPrompt(),
 		"--output-format", "json",
 		"--json-schema", string(riskJSONSchema),
 		"--no-session-persistence",
